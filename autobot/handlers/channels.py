@@ -125,8 +125,9 @@ async def receive_channel(message: Message, state: FSMContext):
         )
 
     owner = await get_user(message.from_user.id)
-
-    channels = owner.get("channels", [])
+    if not owner or not isinstance(owner, dict):
+        owner = {"channels": []}
+    channels = owner.get("channels", []) if isinstance(owner, dict) else []
 
     if chat.id in channels:
 
@@ -489,8 +490,7 @@ async def remove(call: CallbackQuery):
     chat_id = int(call.data.split("_")[1])
 
     user = await get_user(call.from_user.id)
-
-    channels = user.get("channels", [])
+    channels = user.get("channels", []) if user and isinstance(user, dict) else []
 
     if chat_id in channels:
 

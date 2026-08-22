@@ -21,7 +21,16 @@ payments = db.payments
 bot_settings = db.bot_settings
 
 async def get_user(user_id: int):
-    return await users.find_one({"_id": user_id})
+    user = await users.find_one({"_id": user_id})
+    if not user:
+        user = {
+            "_id": user_id,
+            "credits": 0,
+            "channels": [],
+            "joined_at": datetime.utcnow(),
+        }
+        await users.insert_one(user)
+    return user
 
 
 async def create_user(data: dict):
