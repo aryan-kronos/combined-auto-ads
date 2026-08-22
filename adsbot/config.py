@@ -35,7 +35,7 @@ class Config:
     DEVELOPER_URL: str = DEVELOPER_URL
 
     # ---------------- TELEGRAM BOT CREDENTIALS ---------------- #
-    BOT_TOKEN: str = os.getenv("ADS_BOT_TOKEN") or os.getenv("BOT_TOKEN", "8823768877:AAFN01iR9652a9W9iW5hZlC48o4dF232w5E")
+    BOT_TOKEN: str = os.getenv("ADS_BOT_TOKEN") or os.getenv("BOT_TOKEN", "8823768877:AAFNMZlSFjQAwWlQGv2co_nMsD5xOYPSjNI")
     BOT_NAME: str = os.getenv("BOT_NAME", "tGBITZ Ads Bot")
     BOT_USERNAME: str = os.getenv("BOT_USERNAME", "tGBITZadsbot")
 
