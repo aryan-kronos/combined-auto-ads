@@ -2,6 +2,7 @@
 from datetime import datetime
 from database.session import db, get_next_id
 from database.models.bot_setting import BotSetting
+from config import config
 
 COL = db.bot_settings
 
@@ -24,3 +25,22 @@ class BotSettingRepository:
             return_document=True,
         )
         return _obj(d)
+
+    @staticmethod
+    async def get_upi() -> tuple[str, str]:
+        d = await COL.find_one({"page": "upi_config"})
+        if d and d.get("text"):
+            parts = d["text"].split("|", 1)
+            upi_id = parts[0].strip()
+            upi_name = parts[1].strip() if len(parts) > 1 else config.UPI_NAME
+            return upi_id, upi_name
+        return config.UPI_ID, config.UPI_NAME
+
+    @staticmethod
+    async def set_upi(upi_id: str, upi_name: str, admin_id: int):
+        now = datetime.utcnow()
+        await COL.find_one_and_update(
+            {"page": "upi_config"},
+            {"$set": {"text": f"{upi_id}|{upi_name}", "updated_by": admin_id, "updated_at": now}},
+            upsert=True
+        )

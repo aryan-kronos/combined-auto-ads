@@ -12,6 +12,7 @@ from config import config
 from database.session import db
 from database.repository.campaign_repo import CampaignRepository
 from database.repository.account_repo import AccountRepository
+from database.repository.bot_setting_repo import BotSettingRepository
 from utils.smart_edit import smart_edit
 from loader import bot
 
@@ -24,6 +25,9 @@ MAINTENANCE_MODE = False
 class AdminBroadcastState(StatesGroup):
     waiting_message = State()
     confirm_broadcast = State()
+
+class AdminUpiState(StatesGroup):
+    waiting_upi_details = State()
 
 
 def is_maintenance():
@@ -44,6 +48,12 @@ def admin_keyboard():
         style="primary",
         icon_custom_emoji_id=button_emoji_id("5913241115489734452")
     )
+    kb.button(
+        text="UPI Payment Config",
+        callback_data="admin_upi_settings",
+        style="primary",
+        icon_custom_emoji_id=button_emoji_id("5408854995359524419")
+    )
     m_badge = "🔴 Disable Maintenance" if MAINTENANCE_MODE else "🟢 Enable Maintenance"
     kb.button(
         text=m_badge,
@@ -57,7 +67,7 @@ def admin_keyboard():
         style="danger",
         icon_custom_emoji_id=button_emoji_id("5474534700401833481")
     )
-    kb.adjust(1, 2, 1)
+    kb.adjust(1, 2, 1, 1)
     return kb.as_markup()
 
 
@@ -88,271 +98,414 @@ async def render_admin_panel(event):
 
     m_status = "🔴 <b>ACTIVE (Under Maintenance)</b>" if MAINTENANCE_MODE else "🟢 <b>OPERATIONAL (Online)</b>"
 
+    upi_id, upi_name = await BotSettingRepository.get_upi()
+
     text = f"""
 👑 <b>TGBITZ Ads Bot Control Panel</b>
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 <blockquote>
 ⚙️ <b>System Status:</b> {m_status}
+💳 <b>Active UPI:</b> <code>{upi_id}</code> ({upi_name})
 </blockquote>
 
 <blockquote>
 👥 <b>User Telemetry:</b>
-• <b>Total Users:</b> <code>{total_users:,}</code>
-• 💎 <b>VIP Members:</b> <code>{premium_users:,}</code>
-• 🚫 <b>Banned Users:</b> <code>{banned_users:,}</code>
+• Total Users: <code>{total_users}</code>
+• Premium VIP Users: <code>{premium_users}</code>
+• Banned Users: <code>{banned_users}</code>
 </blockquote>
 
 <blockquote>
-📱 <b>Session Pool Telemetry:</b>
-• <b>Total Connected Accounts:</b> <code>{total_accounts:,}</code>
-• 🟢 <b>Active & Ready:</b> <code>{active_accounts:,}</code>
-• 🔴 <b>Expired / Dead:</b> <code>{max(0, total_accounts - active_accounts):,}</code>
+📱 <b>Connected Account Telemetry:</b>
+• Total User Sessions: <code>{total_accounts}</code>
+• Active Logged In: <code>{active_accounts}</code>
 </blockquote>
 
 <blockquote>
-📢 <b>Broadcast Engine Telemetry:</b>
-• <b>Total Campaigns:</b> <code>{total_campaigns:,}</code>
-• 🟢 <b>Active Running:</b> <code>{running_campaigns:,}</code>
-• ⏸ <b>Paused:</b> <code>{paused_campaigns:,}</code> | ✅ <b>Completed:</b> <code>{completed_campaigns:,}</code>
-• 📤 <b>Delivered Messages:</b> <code>{total_sent:,}</code> | ❌ <b>Failed:</b> <code>{total_failed:,}</code>
+📢 <b>Campaign Telemetry:</b>
+• Total Campaigns: <code>{total_campaigns}</code>
+• 🚀 Running: <code>{running_campaigns}</code>
+• ⏸️ Paused: <code>{paused_campaigns}</code>
+• ✅ Completed: <code>{completed_campaigns}</code>
+• 📤 Messages Dispatched: <code>{total_sent:,}</code>
+• ⚠️ Failed Dispatches: <code>{total_failed:,}</code>
 </blockquote>
 
 {config.BRAND_FOOTER}
 """
-    if isinstance(event, CallbackQuery):
-        await smart_edit(event, text, admin_keyboard())
-    else:
-        await event.answer(
-            text=premiumize_text(text),
-            reply_markup=admin_keyboard(),
-            parse_mode="HTML",
-            link_preview_options=NO_PREVIEW,
-        )
+    formatted = premiumize_text(text)
+    kb = admin_keyboard()
 
-
-@router.callback_query(F.data == "admin_panel")
-async def admin_panel_callback(callback: CallbackQuery, state: FSMContext):
-    await state.clear()
-    await render_admin_panel(callback)
+    if isinstance(event, Message):
+        await event.answer(formatted, reply_markup=kb, parse_mode="HTML", link_preview_options=NO_PREVIEW)
+    elif isinstance(event, CallbackQuery):
+        await smart_edit(event.message, formatted, reply_markup=kb, link_preview_options=NO_PREVIEW)
+        await event.answer()
 
 
 @router.message(Command("admin"))
-async def admin_panel_command(message: Message, state: FSMContext):
+async def admin_command(msg: Message, state: FSMContext):
     await state.clear()
-    await render_admin_panel(message)
+    await render_admin_panel(msg)
 
 
-# ----------------------------------------------------
-# 1. RUNNING CAMPAIGNS VIEWER
-# ----------------------------------------------------
-@router.callback_query(F.data == "admin_running")
-async def admin_running_callback(callback: CallbackQuery):
-    if callback.from_user.id not in ADMIN_IDS:
-        return await callback.answer("⛔ Access Denied.", show_alert=True)
+@router.callback_query(F.data == "admin_panel")
+async def admin_panel_callback(call: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await render_admin_panel(call)
 
-    campaigns = []
-    async for d in db.campaigns.find({"running": True}):
-        c = await CampaignRepository.get_campaign(d["id"])
-        if c:
-            campaigns.append(c)
 
-    kb = InlineKeyboardBuilder()
+# ------------------ UPI SETTINGS ------------------ #
 
-    if not campaigns:
-        text = f"""
-🚀 <b>Active Running Campaigns</b>
+@router.callback_query(F.data == "admin_upi_settings")
+async def admin_upi_settings(call: CallbackQuery, state: FSMContext):
+    if call.from_user.id not in ADMIN_IDS:
+        return await call.answer("⛔ Access Denied", show_alert=True)
+    await state.clear()
+
+    upi_id, upi_name = await BotSettingRepository.get_upi()
+
+    text = premiumize_text(f"""
+💳 <b>Admin Control — UPI Payment Settings</b>
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 <blockquote>
-✅ <b>No campaigns are currently executing in the background.</b>
-All user queues are idle or completed.
+📱 <b>Current Deposit UPI ID:</b>
+<code>{upi_id}</code> (Tap to copy)
+
+👤 <b>Current Merchant Name:</b>
+<code>{upi_name}</code>
+</blockquote>
+
+<blockquote>
+💡 <i>Any changes made here take effect immediately across all QR codes and user checkout screens without restarting the bot.</i>
 </blockquote>
 
 {config.BRAND_FOOTER}
-"""
-        kb.button(text="Back to Admin Panel", callback_data="admin_panel", style="primary", icon_custom_emoji_id=button_emoji_id("5409284148491726576"))
-        await smart_edit(callback, text, kb.as_markup())
+""")
+    kb = InlineKeyboardBuilder()
+    kb.button(
+        text="✏️ Change UPI ID / Name",
+        callback_data="admin_change_upi",
+        style="success",
+        icon_custom_emoji_id=button_emoji_id("5816539591812845173")
+    )
+    kb.button(
+        text="⬅️ Back to Admin Panel",
+        callback_data="admin_panel",
+        style="primary",
+        icon_custom_emoji_id=button_emoji_id("5474534700401833481")
+    )
+    kb.adjust(1, 1)
+
+    await smart_edit(call.message, text, reply_markup=kb.as_markup(), link_preview_options=NO_PREVIEW)
+    await call.answer()
+
+
+@router.callback_query(F.data == "admin_change_upi")
+async def admin_change_upi(call: CallbackQuery, state: FSMContext):
+    if call.from_user.id not in ADMIN_IDS:
+        return await call.answer("⛔ Access Denied", show_alert=True)
+
+    await state.set_state(AdminUpiState.waiting_upi_details)
+
+    text = premiumize_text(f"""
+✏️ <b>Update Payment UPI Configuration</b>
+━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+<blockquote>
+Please send the new <b>UPI ID</b> and <b>Merchant Name</b> separated by a vertical bar (<code>|</code>).
+
+<b>Format:</b>
+<code>upi_id | merchant_name</code>
+
+<b>Example:</b>
+<code>devanshsingh2@fam | BITZ NETWORK</code>
+</blockquote>
+
+<blockquote>
+<i>Tap Cancel below to abort.</i>
+</blockquote>
+
+{config.BRAND_FOOTER}
+""")
+    kb = InlineKeyboardBuilder()
+    kb.button(text="❌ Cancel", callback_data="admin_upi_settings", style="danger")
+
+    await smart_edit(call.message, text, reply_markup=kb.as_markup(), link_preview_options=NO_PREVIEW)
+    await call.answer()
+
+
+@router.message(AdminUpiState.waiting_upi_details)
+async def process_new_upi(msg: Message, state: FSMContext):
+    if msg.from_user.id not in ADMIN_IDS:
         return
 
-    camp_lines = []
-    for c in campaigns:
-        acc = await AccountRepository.get_account(c.account_id)
-        camp_lines.append(f"• 🆔 <b>Campaign #{c.id}</b> | 📱 {acc.account_name if acc else 'Acc'} | 📤 Sent: <code>{c.total_sent}</code> | ❌ Failed: <code>{c.failed_sent}</code>")
-        kb.button(text=f"⏹ Stop #{c.id}", callback_data=f"admin_stop_camp_{c.id}", style="danger")
+    raw = (msg.text or "").strip()
+    if not raw:
+        return await msg.answer("❌ Please send valid text. Example: <code>devanshsingh2@fam | BITZ NETWORK</code>", parse_mode="HTML")
 
-    kb.button(text="Back to Admin Panel", callback_data="admin_panel", style="primary", icon_custom_emoji_id=button_emoji_id("5409284148491726576"))
-    kb.adjust(2, 2, 1)
+    if "|" in raw:
+        parts = raw.split("|", 1)
+        upi_id = parts[0].strip()
+        upi_name = parts[1].strip() or config.UPI_NAME
+    else:
+        upi_id = raw.strip()
+        upi_name = config.UPI_NAME
 
-    c_str = "\n".join(camp_lines)
-    text = f"""
-🚀 <b>Active Running Campaigns</b>
+    await BotSettingRepository.set_upi(upi_id, upi_name, msg.from_user.id)
+    await state.clear()
+
+    kb = InlineKeyboardBuilder()
+    kb.button(text="⬅️ Back to UPI Settings", callback_data="admin_upi_settings", style="primary")
+    kb.button(text="👑 Admin Panel", callback_data="admin_panel", style="primary")
+    kb.adjust(1, 1)
+
+    await msg.answer(
+        premiumize_text(f"""
+✅ <b>UPI Configuration Updated Successfully!</b>
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 <blockquote>
-🟢 <b>Live Active Campaigns:</b> <code>{len(campaigns)}</code>
+📱 <b>New UPI ID:</b> <code>{upi_id}</code>
+👤 <b>New Merchant:</b> <code>{upi_name}</code>
 </blockquote>
 
 <blockquote>
-{c_str}
+🎉 <i>All future QR codes and checkout screens will now immediately use this new UPI ID.</i>
 </blockquote>
 
 {config.BRAND_FOOTER}
+"""),
+        reply_markup=kb.as_markup(),
+        parse_mode="HTML",
+        link_preview_options=NO_PREVIEW
+    )
+
+
+# ------------------ MAINTENANCE MODE ------------------ #
+
+@router.callback_query(F.data == "admin_maintenance")
+async def toggle_maintenance(call: CallbackQuery):
+    global MAINTENANCE_MODE
+    if call.from_user.id not in ADMIN_IDS:
+        return await call.answer("⛔ Access Denied", show_alert=True)
+
+    MAINTENANCE_MODE = not MAINTENANCE_MODE
+    state_desc = "ACTIVATED" if MAINTENANCE_MODE else "DEACTIVATED"
+    await call.answer(f"⚙️ Maintenance Mode has been {state_desc}!", show_alert=True)
+    await render_admin_panel(call)
+
+
+# ------------------ RUNNING CAMPAIGNS ------------------ #
+
+@router.callback_query(F.data == "admin_running")
+async def admin_running_campaigns(call: CallbackQuery):
+    if call.from_user.id not in ADMIN_IDS:
+        return await call.answer("⛔ Access Denied", show_alert=True)
+
+    cursor = db.campaigns.find({"running": True})
+    running_list = await cursor.to_list(length=20)
+
+    if not running_list:
+        text = premiumize_text(f"""
+📢 <b>Live Running Campaigns Monitor</b>
+━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+<blockquote>
+• <i>No active broadcasting campaigns are running right now.</i>
+• <i>All accounts are currently idle and ready.</i>
+</blockquote>
+
+{config.BRAND_FOOTER}
+""")
+        kb = InlineKeyboardBuilder()
+        kb.button(text="⬅️ Back to Admin Panel", callback_data="admin_panel", style="primary")
+        await smart_edit(call.message, text, reply_markup=kb.as_markup(), link_preview_options=NO_PREVIEW)
+        return await call.answer()
+
+    text = f"""
+📢 <b>Live Running Campaigns Monitor ({len(running_list)})</b>
+━━━━━━━━━━━━━━━━━━━━━━━━━━
 """
-    await smart_edit(callback, text, kb.as_markup())
+    kb = InlineKeyboardBuilder()
+    for c in running_list:
+        c_id = c.get("id") or str(c.get("_id"))
+        user_id = c.get("user_id")
+        sent = c.get("total_sent", 0)
+        text += f"""
+<blockquote>
+🔹 <b>Campaign #{c_id}</b>
+• 👤 Owner: <code>{user_id}</code>
+• 📤 Sent: <code>{sent}</code> messages
+</blockquote>
+"""
+        kb.button(
+            text=f"⏹ Stop Campaign #{c_id}",
+            callback_data=f"admin_stop_camp_{c_id}",
+            style="danger"
+        )
+
+    text += f"\n{config.BRAND_FOOTER}"
+    kb.button(text="⬅️ Back to Admin Panel", callback_data="admin_panel", style="primary")
+    kb.adjust(1)
+
+    await smart_edit(call.message, premiumize_text(text), reply_markup=kb.as_markup(), link_preview_options=NO_PREVIEW)
+    await call.answer()
 
 
 @router.callback_query(F.data.startswith("admin_stop_camp_"))
-async def admin_stop_camp_callback(callback: CallbackQuery):
-    if callback.from_user.id not in ADMIN_IDS:
-        return await callback.answer("⛔ Access Denied.", show_alert=True)
+async def admin_stop_campaign(call: CallbackQuery):
+    if call.from_user.id not in ADMIN_IDS:
+        return await call.answer("⛔ Access Denied", show_alert=True)
 
-    camp_id = int(callback.data.split("_")[3])
-    await CampaignRepository.update_status(camp_id, running=False, paused=False)
-    await callback.answer(f"Campaign #{camp_id} stopped.", show_alert=True)
-    await admin_running_callback(callback)
+    camp_id_str = call.data.replace("admin_stop_camp_", "")
+    try:
+        camp_id = int(camp_id_str)
+        await db.campaigns.update_one({"id": camp_id}, {"$set": {"running": False, "paused": True}})
+    except Exception:
+        await db.campaigns.update_one({"_id": camp_id_str}, {"$set": {"running": False, "paused": True}})
 
-
-# ----------------------------------------------------
-# 2. MAINTENANCE TOGGLE
-# ----------------------------------------------------
-@router.callback_query(F.data == "admin_maintenance")
-async def admin_maintenance_callback(callback: CallbackQuery):
-    if callback.from_user.id not in ADMIN_IDS:
-        return await callback.answer("⛔ Access Denied.", show_alert=True)
-
-    global MAINTENANCE_MODE
-    MAINTENANCE_MODE = not MAINTENANCE_MODE
-    state_str = "ENABLED (Users restricted)" if MAINTENANCE_MODE else "DISABLED (Bot online)"
-    await callback.answer(f"Maintenance Mode {state_str}!", show_alert=True)
-    await render_admin_panel(callback)
+    await call.answer(f"🛑 Campaign #{camp_id_str} has been halted!", show_alert=True)
+    await admin_running_campaigns(call)
 
 
-# ----------------------------------------------------
-# 3. MASS BROADCAST WIZARD
-# ----------------------------------------------------
+# ------------------ BROADCAST WIZARD ------------------ #
+
 @router.callback_query(F.data == "admin_broadcast")
-async def admin_broadcast_callback(callback: CallbackQuery, state: FSMContext):
-    if callback.from_user.id not in ADMIN_IDS:
-        return await callback.answer("⛔ Access Denied.", show_alert=True)
+async def start_broadcast(call: CallbackQuery, state: FSMContext):
+    if call.from_user.id not in ADMIN_IDS:
+        return await call.answer("⛔ Access Denied", show_alert=True)
 
     await state.set_state(AdminBroadcastState.waiting_message)
-    text = f"""
-📢 <b>Global Mass Broadcast Wizard</b>
+    text = premiumize_text(f"""
+📣 <b>Global Broadcast Message Wizard</b>
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 <blockquote>
-Please send or forward the message you want to broadcast to <b>all registered users</b>.
+Please send or forward the message you want to broadcast to <b>ALL bot users</b>.
+
+Supported Content:
+• 📝 Formatted Text
+• 🖼️ Photos & Captions
+• 🎥 Videos & Documents
+• 🔘 Inline Buttons (if forwarded)
 </blockquote>
 
 <blockquote>
-📎 <b>Supports:</b> Text, Photos, Videos, Documents, Voice Notes, Buttons, and Media Groups!
+<i>Tap Cancel below to abort.</i>
 </blockquote>
 
 {config.BRAND_FOOTER}
-"""
+""")
     kb = InlineKeyboardBuilder()
-    kb.button(text="Cancel", callback_data="admin_panel", style="danger", icon_custom_emoji_id=button_emoji_id("5974083768233760323"))
-    await smart_edit(callback, text, kb.as_markup())
-    await state.update_data(broadcast_prompt_id=callback.message.message_id)
+    kb.button(text="❌ Cancel Broadcast", callback_data="admin_panel", style="danger")
+    await smart_edit(call.message, text, reply_markup=kb.as_markup(), link_preview_options=NO_PREVIEW)
+    await call.answer()
 
 
 @router.message(AdminBroadcastState.waiting_message)
-async def process_broadcast_message(message: Message, state: FSMContext):
-    if message.from_user.id not in ADMIN_IDS:
+async def preview_broadcast(msg: Message, state: FSMContext):
+    if msg.from_user.id not in ADMIN_IDS:
         return
 
     await state.update_data(
-        b_chat_id=message.chat.id,
-        b_msg_id=message.message_id,
+        from_chat_id=msg.chat.id,
+        message_id=msg.message_id
     )
     await state.set_state(AdminBroadcastState.confirm_broadcast)
 
-    total_recipients = await db.users.count_documents({})
-
-    confirm_text = premiumize_text(f"""
-⚠️ <b>Confirm Mass Broadcast Dispatch</b>
-━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-<blockquote>
-👥 <b>Total Target Recipients:</b> <code>{total_recipients:,}</code>
-📨 <b>Message Type:</b> {message.content_type.capitalize()}
-</blockquote>
-
-<blockquote>
-Are you ready to dispatch this broadcast to all users?
-</blockquote>
-""")
+    total_recipients = await db.users.count_documents({"is_banned": {"$ne": True}})
 
     kb = InlineKeyboardBuilder()
-    kb.button(text="🚀 Confirm & Send", callback_data="confirm_b_send", style="success", icon_custom_emoji_id=button_emoji_id("5389057356493511934"))
-    kb.button(text="❌ Cancel", callback_data="admin_panel", style="danger", icon_custom_emoji_id=button_emoji_id("5974083768233760323"))
+    kb.button(
+        text=f"🚀 Dispatch to {total_recipients:,} Users",
+        callback_data="admin_broadcast_confirm",
+        style="success",
+        icon_custom_emoji_id=button_emoji_id("5389057356493511934")
+    )
+    kb.button(
+        text="❌ Discard",
+        callback_data="admin_panel",
+        style="danger",
+        icon_custom_emoji_id=button_emoji_id("5474534700401833481")
+    )
     kb.adjust(1, 1)
 
-    await message.reply(
-        text=confirm_text,
-        reply_markup=kb.as_markup(),
-        parse_mode="HTML",
-        link_preview_options=NO_PREVIEW,
-    )
-
-
-@router.callback_query(F.data == "confirm_b_send")
-async def execute_broadcast(callback: CallbackQuery, state: FSMContext):
-    if callback.from_user.id not in ADMIN_IDS:
-        return await callback.answer("⛔ Access Denied.", show_alert=True)
-
-    data = await state.get_data()
-    b_chat_id = data.get("b_chat_id")
-    b_msg_id = data.get("b_msg_id")
-    await state.clear()
-
-    if not b_chat_id or not b_msg_id:
-        return await callback.answer("Broadcast data expired.", show_alert=True)
-
-    users = [d["telegram_id"] async for d in db.users.find({}, {"telegram_id": 1})]
-    total = len(users)
-
-    progress_msg = await callback.message.edit_text(
-        f"📢 <b>Broadcasting in Progress...</b>\n\nProgress: <code>0/{total}</code> (0%)",
-        parse_mode="HTML"
-    )
-
-    sent = 0
-    failed = 0
-
-    for i, u_id in enumerate(users, start=1):
-        try:
-            await bot.copy_message(chat_id=u_id, from_chat_id=b_chat_id, message_id=b_msg_id)
-            sent += 1
-        except Exception:
-            failed += 1
-
-        if i % 15 == 0 or i == total:
-            pct = int((i / total) * 100) if total else 100
-            try:
-                await progress_msg.edit_text(
-                    f"📢 <b>Broadcasting in Progress...</b>\n\n"
-                    f"📊 <b>Progress:</b> <code>{i}/{total}</code> (<b>{pct}%</b>)\n"
-                    f"✅ <b>Delivered:</b> <code>{sent}</code> | ❌ <b>Failed:</b> <code>{failed}</code>",
-                    parse_mode="HTML"
-                )
-            except Exception:
-                pass
-        await asyncio.sleep(0.05)
-
-    report_text = premiumize_text(f"""
-✅ <b>Broadcast Completed Successfully!</b>
+    await msg.reply(
+        premiumize_text(f"""
+⚠️ <b>Confirm Broadcast Dispatch</b>
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 <blockquote>
-👥 <b>Total Users Target:</b> <code>{total:,}</code>
-📤 <b>Successfully Delivered:</b> <code>{sent:,}</code>
-❌ <b>Failed / Blocked:</b> <code>{failed:,}</code>
+Target Audience: <b>{total_recipients:,} active users</b>
+</blockquote>
+
+<blockquote>
+Are you sure you want to send this broadcast immediately?
 </blockquote>
 
 {config.BRAND_FOOTER}
-""")
+"""),
+        reply_markup=kb.as_markup(),
+        parse_mode="HTML"
+    )
+
+
+@router.callback_query(F.data == "admin_broadcast_confirm")
+async def execute_broadcast(call: CallbackQuery, state: FSMContext):
+    if call.from_user.id not in ADMIN_IDS:
+        return await call.answer("⛔ Access Denied", show_alert=True)
+
+    data = await state.get_data()
+    from_chat_id = data.get("from_chat_id")
+    message_id = data.get("message_id")
+
+    if not from_chat_id or not message_id:
+        await state.clear()
+        return await call.answer("Broadcast session expired. Please retry.", show_alert=True)
+
+    await state.clear()
+    await call.message.edit_text(premiumize_text("🚀 <b>Broadcasting in progress...</b>"), parse_mode="HTML")
+
+    success = 0
+    failed = 0
+
+    async for user in db.users.find({"is_banned": {"$ne": True}}, {"user_id": 1, "id": 1, "_id": 1}):
+        uid = user.get("user_id") or user.get("id") or user.get("_id")
+        if not uid or not isinstance(uid, int):
+            continue
+
+        try:
+            await bot.copy_message(
+                chat_id=uid,
+                from_chat_id=from_chat_id,
+                message_id=message_id
+            )
+            success += 1
+            await asyncio.sleep(0.05)
+        except Exception:
+            failed += 1
+
     kb = InlineKeyboardBuilder()
-    kb.button(text="Back to Admin Panel", callback_data="admin_panel", style="primary", icon_custom_emoji_id=button_emoji_id("5409284148491726576"))
-    await progress_msg.edit_text(report_text, reply_markup=kb.as_markup(), parse_mode="HTML", link_preview_options=NO_PREVIEW)
+    kb.button(text="👑 Back to Admin Panel", callback_data="admin_panel", style="primary")
+
+    await call.message.edit_text(
+        premiumize_text(f"""
+✅ <b>Broadcast Completed!</b>
+━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+<blockquote>
+📊 <b>Delivery Results:</b>
+• 🟢 Delivered: <code>{success:,}</code>
+• 🔴 Failed / Blocked: <code>{failed:,}</code>
+• 👥 Total Attempted: <code>{success + failed:,}</code>
+</blockquote>
+
+{config.BRAND_FOOTER}
+"""),
+        reply_markup=kb.as_markup(),
+        parse_mode="HTML",
+        link_preview_options=NO_PREVIEW
+    )

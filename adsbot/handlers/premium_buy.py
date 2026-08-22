@@ -13,18 +13,16 @@ from aiogram.fsm.context import FSMContext
 
 from handlers.premium.state import PremiumState
 from database.repository.user_repo import UserRepository
+from database.repository.bot_setting_repo import BotSettingRepository
 from utils.smart_edit import smart_edit
 from config import config
 
 router = Router()
 
-UPI_ID = config.UPI_ID
-PRICE = "₹499"
 
-
-def generate_upi_qr(upi_id: str = UPI_ID, amount: str = "499", note: str = "Premium Membership") -> bytes:
+def generate_upi_qr(upi_id: str, upi_name: str, amount: str = "499", note: str = "Premium Membership") -> bytes:
     clean_upi = (upi_id or config.UPI_ID).strip()
-    name = config.UPI_NAME.replace(" ", "%20")
+    name = (upi_name or config.UPI_NAME).replace(" ", "%20")
     upi_uri = f"upi://pay?pa={clean_upi}&pn={name}&cu=INR&am={amount}&tn={note.replace(' ', '%20')}"
     qr = qrcode.QRCode(version=1, error_correction=qrcode.constants.ERROR_CORRECT_M, box_size=10, border=4)
     qr.add_data(upi_uri)
@@ -39,8 +37,9 @@ def generate_upi_qr(upi_id: str = UPI_ID, amount: str = "499", note: str = "Prem
 @router.callback_query(F.data == "buy_premium")
 async def buy_premium(callback: CallbackQuery, state: FSMContext):
     await state.clear()
-    kb = InlineKeyboardBuilder()
+    upi_id, upi_name = await BotSettingRepository.get_upi()
 
+    kb = InlineKeyboardBuilder()
     kb.button(
         text="Upload Payment Screenshot",
         callback_data="premium_paid",
@@ -55,7 +54,7 @@ async def buy_premium(callback: CallbackQuery, state: FSMContext):
     )
     kb.adjust(1, 1)
 
-    qr_bytes = generate_upi_qr(amount="499")
+    qr_bytes = generate_upi_qr(upi_id=upi_id, upi_name=upi_name, amount="499")
     photo = BufferedInputFile(qr_bytes, filename="premium_qr.png")
 
     caption = premiumize_text(f"""
@@ -69,8 +68,8 @@ async def buy_premium(callback: CallbackQuery, state: FSMContext):
 </blockquote>
 
 <blockquote>
-📱 <b>UPI ID:</b> <code>{UPI_ID}</code> (Tap to copy)
-👤 <b>Merchant:</b> <code>{config.UPI_NAME}</code>
+📱 <b>UPI ID:</b> <code>{upi_id}</code> (Tap to copy)
+👤 <b>Merchant:</b> <code>{upi_name}</code>
 </blockquote>
 
 <blockquote>
@@ -99,69 +98,120 @@ async def buy_premium(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "premium_paid")
 async def premium_paid(callback: CallbackQuery, state: FSMContext):
     await state.set_state(PremiumState.waiting_screenshot)
-    text = premiumize_text("""
+
+    kb = InlineKeyboardBuilder()
+    kb.button(
+        text="Cancel",
+        callback_data="buy_premium",
+        style="danger",
+        icon_custom_emoji_id=button_emoji_id("5474534700401833481")
+    )
+
+    text = premiumize_text(f"""
 📸 <b>Upload Payment Screenshot</b>
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 <blockquote>
-Please send the payment screenshot now from your gallery.
-Our admin team will verify it and activate your Lifetime Premium instantly!
+Please send the screenshot / receipt of your successful transaction.
+Our administration team will verify and activate your VIP subscription within minutes!
 </blockquote>
+
+{config.BRAND_FOOTER}
 """)
-    kb = InlineKeyboardBuilder()
-    kb.button(text="Cancel", callback_data="home", style="danger", icon_custom_emoji_id=button_emoji_id("5974083768233760323"))
+
     try:
-        await callback.message.edit_caption(caption=text, reply_markup=kb.as_markup(), parse_mode="HTML")
+        await callback.message.delete()
     except Exception:
-        await callback.message.answer(text, reply_markup=kb.as_markup(), parse_mode="HTML")
+        pass
+
+    await callback.message.answer(
+        text=text,
+        reply_markup=kb.as_markup(),
+        parse_mode="HTML"
+    )
     await callback.answer()
 
 
-@router.message(PremiumState.waiting_screenshot, F.photo)
+@router.message(PremiumState.waiting_screenshot)
 async def process_screenshot(message: Message, state: FSMContext):
-    photo_id = message.photo[-1].file_id
-    user_id = message.from_user.id
-    username = message.from_user.username or "No username"
+    if not message.photo and not message.document:
+        await message.reply(premiumize_text("⚠️ <b>Please send a valid image or screenshot receipt.</b>"), parse_mode="HTML")
+        return
 
-    admin_caption = premiumize_text(f"""
-👑 <b>New Premium Purchase Screenshot</b>
+    user_id = message.from_user.id
+    username = f"@{message.from_user.username}" if message.from_user.username else f"<a href='tg://user?id={user_id}'>User {user_id}</a>"
+
+    caption = premiumize_text(f"""
+👑 <b>NEW LIFETIME PREMIUM VIP ORDER</b>
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
-👤 <b>User:</b> {message.from_user.full_name} (<code>{user_id}</code>)
-🔗 <b>Username:</b> @{username}
-💵 <b>Plan:</b> Lifetime Premium (₹499)
-━━━━━━━━━━━━━━━━━━━━━━━━━━
-Approve or Reject below:
+
+<blockquote>
+👤 <b>User:</b> {username}
+🆔 <b>User ID:</b> <code>{user_id}</code>
+💵 <b>Plan:</b> Lifetime Premium VIP (₹499)
+</blockquote>
+
+{config.BRAND_FOOTER}
 """)
 
     kb = InlineKeyboardBuilder()
-    kb.button(text="Approve Premium", callback_data=f"approve_prem_{user_id}", style="success", icon_custom_emoji_id=button_emoji_id("5980930633298350051"))
-    kb.button(text="Reject", callback_data=f"reject_prem_{user_id}", style="danger", icon_custom_emoji_id=button_emoji_id("5974083768233760323"))
-    kb.adjust(1, 1)
+    kb.button(
+        text="Approve VIP",
+        callback_data=f"approve_vip_{user_id}",
+        style="success",
+        icon_custom_emoji_id=button_emoji_id("4929524417354007168")
+    )
+    kb.button(
+        text="Reject Order",
+        callback_data=f"reject_vip_{user_id}",
+        style="danger",
+        icon_custom_emoji_id=button_emoji_id("5474534700401833481")
+    )
+    kb.adjust(2)
 
     for admin_id in config.ADMINS:
         try:
-            await message.bot.send_photo(
-                chat_id=admin_id,
-                photo=photo_id,
-                caption=admin_caption,
-                reply_markup=kb.as_markup(),
-                parse_mode="HTML"
-            )
+            if message.photo:
+                await message.bot.send_photo(
+                    chat_id=admin_id,
+                    photo=message.photo[-1].file_id,
+                    caption=caption,
+                    reply_markup=kb.as_markup(),
+                    parse_mode="HTML"
+                )
+            elif message.document:
+                await message.bot.send_document(
+                    chat_id=admin_id,
+                    document=message.document.file_id,
+                    caption=caption,
+                    reply_markup=kb.as_markup(),
+                    parse_mode="HTML"
+                )
         except Exception:
             pass
 
     await state.clear()
-    success_text = premiumize_text(f"""
-✅ <b>Payment Proof Submitted Successfully!</b>
+
+    home_kb = InlineKeyboardBuilder()
+    home_kb.button(
+        text="Home",
+        callback_data="home",
+        style="primary",
+        icon_custom_emoji_id=button_emoji_id("5193119436621494267")
+    )
+
+    await message.reply(
+        premiumize_text(f"""
+✅ <b>Receipt Received Successfully!</b>
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 <blockquote>
-Our team has received your verification screenshot for Lifetime Premium.
-Your account will be upgraded immediately upon review!
+Your transaction has been submitted to the management team.
+Your account will be upgraded to <b>Lifetime VIP</b> shortly after verification.
 </blockquote>
 
-👤 <b>Support:</b> @{config.SUPPORT_USERNAME}
-""")
-    kb_home = InlineKeyboardBuilder()
-    kb_home.button(text="Return to Home", callback_data="home", style="primary", icon_custom_emoji_id=button_emoji_id("5193119436621494267"))
-    await message.answer(success_text, reply_markup=kb_home.as_markup(), parse_mode="HTML")
+{config.BRAND_FOOTER}
+"""),
+        reply_markup=home_kb.as_markup(),
+        parse_mode="HTML"
+    )
