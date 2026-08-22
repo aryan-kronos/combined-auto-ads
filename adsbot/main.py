@@ -123,6 +123,9 @@ async def main():
 
     dp.errors.register(global_error_handler)
 
+    # ADMIN (Top Priority)
+    dp.include_router(admin_panel_router)
+
     # USER
     dp.include_router(start_router)
     # USER
@@ -155,7 +158,6 @@ async def main():
     dp.include_router(feedback_router)
 
     # ADMIN
-    dp.include_router(admin_panel_router)
     dp.include_router(status_router)
     dp.include_router(running_router)
     dp.include_router(maintenance_router)

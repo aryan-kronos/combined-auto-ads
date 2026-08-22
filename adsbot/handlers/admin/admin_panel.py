@@ -509,3 +509,149 @@ async def execute_broadcast(call: CallbackQuery, state: FSMContext):
         parse_mode="HTML",
         link_preview_options=NO_PREVIEW
     )
+
+
+# ------------------ VIP APPROVAL / REJECTION ------------------ #
+
+@router.callback_query(F.data.startswith("approve_vip_"))
+async def approve_vip_order(call: CallbackQuery):
+    if call.from_user.id not in ADMIN_IDS:
+        return await call.answer("⛔ Access Denied", show_alert=True)
+
+    target_user_id = int(call.data.replace("approve_vip_", ""))
+    admin_tag = f"@{call.from_user.username}" if call.from_user.username else f"Admin {call.from_user.id}"
+    now_str = asyncio.get_event_loop().time()
+
+    from datetime import datetime
+    await db.users.update_one(
+        {"$or": [{"id": target_user_id}, {"user_id": target_user_id}, {"_id": target_user_id}]},
+        {"$set": {"is_premium": True, "subscription_tier": "VIP", "updated_at": datetime.utcnow()}},
+        upsert=True
+    )
+
+    approved_text = premiumize_text(f"""
+👑 <b>VIP ORDER APPROVED & ACTIVATED!</b>
+━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+<blockquote>
+✅ <b>Status:</b> Lifetime VIP Active
+👤 <b>Approved By:</b> {admin_tag}
+🆔 <b>Recipient User ID:</b> <code>{target_user_id}</code>
+🕒 <b>Activated At:</b> {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}
+</blockquote>
+
+{config.BRAND_FOOTER}
+""")
+
+    try:
+        if call.message.caption:
+            await call.message.edit_caption(caption=approved_text, reply_markup=None, parse_mode="HTML")
+        else:
+            await call.message.edit_text(text=approved_text, reply_markup=None, parse_mode="HTML")
+    except Exception:
+        pass
+
+    await call.answer("✅ VIP Activated successfully!", show_alert=True)
+
+    user_notify = premiumize_text(f"""
+🎉 <b>CONGRATULATIONS! YOUR VIP ACCESS IS ACTIVE!</b>
+━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+<blockquote>
+👑 Your payment has been verified and your account is now upgraded to <b>Lifetime Premium VIP</b>!
+</blockquote>
+
+<blockquote expandable>
+💎 <b>All VIP Privileges Unlocked:</b>
+• 📱 <b>Multi-Account Engine:</b> Link up to 10 accounts simultaneously
+• ⚡ <b>Parallel Ad Blaster:</b> Broadcast across all your target groups
+• 🔁 <b>Custom Looping:</b> Zero cooldowns & infinite retry loops
+• 🔄 <b>Auto Bio Rotation:</b> Store & rotate 5 custom bios automatically
+• 🛡 <b>Clean Identity:</b> Removes default network tags & links
+• 🛟 <b>Priority Support:</b> Direct escalation with our core team
+</blockquote>
+
+<blockquote>
+🚀 <i>Tap Home below or send /start to access all your VIP features!</i>
+</blockquote>
+
+{config.BRAND_FOOTER}
+""")
+    kb = InlineKeyboardBuilder()
+    kb.button(text="🏠 Open VIP Dashboard", callback_data="home", style="success", icon_custom_emoji_id=button_emoji_id("5193119436621494267"))
+
+    try:
+        await bot.send_message(
+            chat_id=target_user_id,
+            text=user_notify,
+            reply_markup=kb.as_markup(),
+            parse_mode="HTML",
+            link_preview_options=NO_PREVIEW
+        )
+    except Exception as e:
+        print(f"Could not notify user {target_user_id}: {e}")
+
+
+@router.callback_query(F.data.startswith("reject_vip_"))
+async def reject_vip_order(call: CallbackQuery):
+    if call.from_user.id not in ADMIN_IDS:
+        return await call.answer("⛔ Access Denied", show_alert=True)
+
+    target_user_id = int(call.data.replace("reject_vip_", ""))
+    admin_tag = f"@{call.from_user.username}" if call.from_user.username else f"Admin {call.from_user.id}"
+
+    from datetime import datetime
+    rejected_text = premiumize_text(f"""
+❌ <b>VIP ORDER REJECTED</b>
+━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+<blockquote>
+🛑 <b>Status:</b> Transaction Rejected / Not Verified
+👤 <b>Reviewed By:</b> {admin_tag}
+🆔 <b>User ID:</b> <code>{target_user_id}</code>
+🕒 <b>Rejected At:</b> {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}
+</blockquote>
+
+{config.BRAND_FOOTER}
+""")
+
+    try:
+        if call.message.caption:
+            await call.message.edit_caption(caption=rejected_text, reply_markup=None, parse_mode="HTML")
+        else:
+            await call.message.edit_text(text=rejected_text, reply_markup=None, parse_mode="HTML")
+    except Exception:
+        pass
+
+    await call.answer("❌ Order Rejected", show_alert=True)
+
+    user_notify = premiumize_text(f"""
+⚠️ <b>PAYMENT VERIFICATION NOTICE</b>
+━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+<blockquote>
+We could not verify your payment screenshot for the VIP Membership order.
+</blockquote>
+
+<blockquote>
+If you completed this transaction and believe this is an error:
+👉 Please reach out to our Support Lead: <a href='{config.SUPPORT_URL}'>@{config.SUPPORT_USERNAME}</a> with your UTR / transaction ID.
+</blockquote>
+
+{config.BRAND_FOOTER}
+""")
+    kb = InlineKeyboardBuilder()
+    kb.button(text="🛟 Contact Support", url=config.SUPPORT_URL, style="primary")
+    kb.button(text="🏠 Home", callback_data="home", style="danger")
+    kb.adjust(1, 1)
+
+    try:
+        await bot.send_message(
+            chat_id=target_user_id,
+            text=user_notify,
+            reply_markup=kb.as_markup(),
+            parse_mode="HTML",
+            link_preview_options=NO_PREVIEW
+        )
+    except Exception as e:
+        print(f"Could not notify user {target_user_id}: {e}")

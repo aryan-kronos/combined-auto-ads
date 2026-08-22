@@ -87,9 +87,9 @@ async def home_keyboard(user_id: int):
             style="danger",
             icon_custom_emoji_id=button_emoji_id("5816539591812845173")
         )
-        kb.adjust(2, 2, 2, 2, 2, 1, 1)
+        kb.adjust(2, 2, 2, 2, 2, 2, 1)
     else:
-        kb.adjust(2, 2, 2, 2, 2, 1)
+        kb.adjust(2, 2, 2, 2, 2, 2)
 
     return kb.as_markup()
 
