@@ -42,7 +42,19 @@ FORCE_JOIN_CHANNEL = os.getenv("FORCE_JOIN_CHANNEL", "@tgbitznet")
 # ==========================================
 # Database
 # ==========================================
-MONGO_URI = os.getenv("MONGO_URI", "")
+def _clean_uri(raw: str) -> str:
+    if not raw:
+        return "mongodb+srv://pfparyan_db_user:9EoNNlZ4aCEaD0Nh@cluster0.czoripk.mongodb.net/?retryWrites=true&w=majority"
+    u = raw.strip().strip('"').strip("'").strip()
+    if not (u.startswith("mongodb://") or u.startswith("mongodb+srv://")):
+        return "mongodb+srv://pfparyan_db_user:9EoNNlZ4aCEaD0Nh@cluster0.czoripk.mongodb.net/?retryWrites=true&w=majority"
+    if ".mongodb/" in u:
+        u = u.replace(".mongodb/", ".mongodb.net/")
+    elif u.endswith(".mongodb"):
+        u = u + ".net"
+    return u
+
+MONGO_URI = _clean_uri(os.getenv("MONGO_URI", ""))
 DATABASE_NAME = os.getenv("AUTO_DB_NAME") or os.getenv("DATABASE_NAME", "bitz_autoboost_bot")
 
 # ==========================================

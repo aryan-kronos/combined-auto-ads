@@ -11,11 +11,20 @@ from pymongo.errors import PyMongoError
 
 load_dotenv()
 
-MONGO_URI = os.getenv("MONGO_URI", "").strip()
-DB_NAME = os.getenv("DB_NAME", "tGBITZ_ads_bot").strip()
+def _clean_uri(raw: str) -> str:
+    if not raw:
+        return "mongodb+srv://pfparyan_db_user:9EoNNlZ4aCEaD0Nh@cluster0.czoripk.mongodb.net/?retryWrites=true&w=majority"
+    u = raw.strip().strip('"').strip("'").strip()
+    if not (u.startswith("mongodb://") or u.startswith("mongodb+srv://")):
+        return "mongodb+srv://pfparyan_db_user:9EoNNlZ4aCEaD0Nh@cluster0.czoripk.mongodb.net/?retryWrites=true&w=majority"
+    if ".mongodb/" in u:
+        u = u.replace(".mongodb/", ".mongodb.net/")
+    elif u.endswith(".mongodb"):
+        u = u + ".net"
+    return u
 
-if not MONGO_URI:
-    raise RuntimeError("MONGO_URI is not set in the environment.")
+MONGO_URI = _clean_uri(os.getenv("MONGO_URI", ""))
+DB_NAME = os.getenv("ADS_DB_NAME") or os.getenv("DB_NAME", "tgbitz_ads_bot").strip()
 
 client = AsyncMongoClient(
     MONGO_URI,
