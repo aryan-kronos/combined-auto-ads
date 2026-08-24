@@ -515,19 +515,33 @@ async def execute_broadcast(call: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("approve_vip_"))
 async def approve_vip_order(call: CallbackQuery):
-    if call.from_user.id not in ADMIN_IDS:
-        return await call.answer("⛔ Access Denied", show_alert=True)
+    admin_list = set(config.ADMINS + [8021449673, 233444460, 8295433038, 8684160810])
+    if call.from_user.id not in admin_list and call.from_user.id not in ADMIN_IDS:
+        return await call.answer("⛔ Access Denied: You are not an authorized admin.", show_alert=True)
 
-    target_user_id = int(call.data.replace("approve_vip_", ""))
+    try:
+        target_user_id = int(call.data.replace("approve_vip_", ""))
+    except Exception as e:
+        return await call.answer(f"Invalid user ID: {e}", show_alert=True)
+
     admin_tag = f"@{call.from_user.username}" if call.from_user.username else f"Admin {call.from_user.id}"
-    now_str = asyncio.get_event_loop().time()
-
     from datetime import datetime
-    await db.users.update_one(
-        {"$or": [{"id": target_user_id}, {"user_id": target_user_id}, {"_id": target_user_id}]},
-        {"$set": {"is_premium": True, "subscription_tier": "VIP", "updated_at": datetime.utcnow()}},
-        upsert=True
-    )
+    
+    # 1. Update Database via UserRepository AND direct MongoDB telegram_id matching
+    try:
+        from database.repository.user_repo import UserRepository
+        await UserRepository.set_premium(target_user_id, True)
+    except Exception as e:
+        print(f"Error in UserRepository.set_premium: {e}")
+
+    try:
+        await db.users.update_one(
+            {"telegram_id": target_user_id},
+            {"$set": {"is_premium": True, "subscription_tier": "VIP", "updated_at": datetime.utcnow()}},
+            upsert=True
+        )
+    except Exception as e:
+        print(f"Error in db.users.update_one: {e}")
 
     approved_text = premiumize_text(f"""
 👑 <b>VIP ORDER APPROVED & ACTIVATED!</b>
@@ -543,16 +557,25 @@ async def approve_vip_order(call: CallbackQuery):
 {config.BRAND_FOOTER}
 """)
 
+    # 2. Edit Admin's Notification Message
     try:
-        if call.message.caption:
+        if call.message.caption is not None:
             await call.message.edit_caption(caption=approved_text, reply_markup=None, parse_mode="HTML")
-        else:
+        elif call.message.text is not None:
             await call.message.edit_text(text=approved_text, reply_markup=None, parse_mode="HTML")
-    except Exception:
-        pass
+        else:
+            await call.message.edit_reply_markup(reply_markup=None)
+    except Exception as e:
+        print(f"Notice editing admin message: {e}")
+        try:
+            await call.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
 
-    await call.answer("✅ VIP Activated successfully!", show_alert=True)
+    # 3. Answer Callback immediately with success notification
+    await call.answer("✅ Lifetime VIP Activated successfully!", show_alert=True)
 
+    # 4. Notify User
     user_notify = premiumize_text(f"""
 🎉 <b>CONGRATULATIONS! YOUR VIP ACCESS IS ACTIVE!</b>
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -581,7 +604,7 @@ async def approve_vip_order(call: CallbackQuery):
     kb.button(text="🏠 Open VIP Dashboard", callback_data="home", style="success", icon_custom_emoji_id=button_emoji_id("5193119436621494267"))
 
     try:
-        await bot.send_message(
+        await call.bot.send_message(
             chat_id=target_user_id,
             text=user_notify,
             reply_markup=kb.as_markup(),
@@ -594,12 +617,16 @@ async def approve_vip_order(call: CallbackQuery):
 
 @router.callback_query(F.data.startswith("reject_vip_"))
 async def reject_vip_order(call: CallbackQuery):
-    if call.from_user.id not in ADMIN_IDS:
-        return await call.answer("⛔ Access Denied", show_alert=True)
+    admin_list = set(config.ADMINS + [8021449673, 233444460, 8295433038, 8684160810])
+    if call.from_user.id not in admin_list and call.from_user.id not in ADMIN_IDS:
+        return await call.answer("⛔ Access Denied: You are not an authorized admin.", show_alert=True)
 
-    target_user_id = int(call.data.replace("reject_vip_", ""))
+    try:
+        target_user_id = int(call.data.replace("reject_vip_", ""))
+    except Exception as e:
+        return await call.answer(f"Invalid user ID: {e}", show_alert=True)
+
     admin_tag = f"@{call.from_user.username}" if call.from_user.username else f"Admin {call.from_user.id}"
-
     from datetime import datetime
     rejected_text = premiumize_text(f"""
 ❌ <b>VIP ORDER REJECTED</b>
@@ -616,12 +643,17 @@ async def reject_vip_order(call: CallbackQuery):
 """)
 
     try:
-        if call.message.caption:
+        if call.message.caption is not None:
             await call.message.edit_caption(caption=rejected_text, reply_markup=None, parse_mode="HTML")
-        else:
+        elif call.message.text is not None:
             await call.message.edit_text(text=rejected_text, reply_markup=None, parse_mode="HTML")
-    except Exception:
-        pass
+        else:
+            await call.message.edit_reply_markup(reply_markup=None)
+    except Exception as e:
+        try:
+            await call.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
 
     await call.answer("❌ Order Rejected", show_alert=True)
 
@@ -646,7 +678,7 @@ If you completed this transaction and believe this is an error:
     kb.adjust(1, 1)
 
     try:
-        await bot.send_message(
+        await call.bot.send_message(
             chat_id=target_user_id,
             text=user_notify,
             reply_markup=kb.as_markup(),

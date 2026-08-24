@@ -571,11 +571,28 @@ async def approve_payment_call(call: CallbackQuery):
     except Exception:
         pass
 
-    await call.message.edit_caption(
-        caption=premiumize_text(f"✅ <b>Approved by @{call.from_user.username or call.from_user.id}</b>\n🎁 Added {credits_to_add:,} credits to user <code>{user_id}</code>."),
-        parse_mode="HTML"
-    )
-    await call.answer("Payment Approved!")
+    try:
+        if call.message.caption is not None:
+            await call.message.edit_caption(
+                caption=premiumize_text(f"✅ <b>Approved by @{call.from_user.username or call.from_user.id}</b>\n🎁 Added {credits_to_add:,} credits to user <code>{user_id}</code>."),
+                reply_markup=None,
+                parse_mode="HTML"
+            )
+        elif call.message.text is not None:
+            await call.message.edit_text(
+                text=premiumize_text(f"✅ <b>Approved by @{call.from_user.username or call.from_user.id}</b>\n🎁 Added {credits_to_add:,} credits to user <code>{user_id}</code>."),
+                reply_markup=None,
+                parse_mode="HTML"
+            )
+        else:
+            await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        try:
+            await call.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+
+    await call.answer("✅ Payment Approved!", show_alert=True)
 
 
 @router.callback_query(F.data.startswith("reject_"))
@@ -600,8 +617,25 @@ async def reject_payment_call(call: CallbackQuery):
     except Exception:
         pass
 
-    await call.message.edit_caption(
-        caption=premiumize_text(f"❌ <b>Rejected by @{call.from_user.username or call.from_user.id}</b>"),
-        parse_mode="HTML"
-    )
-    await call.answer("Payment Rejected.")
+    try:
+        if call.message.caption is not None:
+            await call.message.edit_caption(
+                caption=premiumize_text(f"❌ <b>Rejected by @{call.from_user.username or call.from_user.id}</b>"),
+                reply_markup=None,
+                parse_mode="HTML"
+            )
+        elif call.message.text is not None:
+            await call.message.edit_text(
+                text=premiumize_text(f"❌ <b>Rejected by @{call.from_user.username or call.from_user.id}</b>"),
+                reply_markup=None,
+                parse_mode="HTML"
+            )
+        else:
+            await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        try:
+            await call.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+
+    await call.answer("❌ Payment Rejected.", show_alert=True)
