@@ -46,8 +46,15 @@ async def startup():
     print("✅ Settings Loaded")
 
     # Telegram
-    me = await bot.get_me()
-    print(f"✅ @{me.username} started successfully")
+    try:
+        me = await bot.get_me()
+        print(f"✅ @{me.username} started successfully")
+    except Exception as e:
+        masked = f"{BOT_TOKEN[:10]}...{BOT_TOKEN[-5:]}" if len(BOT_TOKEN) > 15 else "[INVALID_OR_EMPTY]"
+        print(f"❌ Auto Boost Bot failed to start: {e}")
+        print(f"👉 Token used: {masked} (length: {len(BOT_TOKEN)})")
+        print("💡 Check AUTOBOT_BOT_TOKEN or BOT_TOKEN in your environment variables.")
+        raise
 
     # CheapestSMM API
     try:
