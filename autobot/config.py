@@ -16,17 +16,28 @@ DEVELOPER_NAME: str = "ᴀʀʏᴀɴ"
 DEVELOPER_USERNAME: str = "thatonearyan"
 DEVELOPER_URL: str = "https://t.me/thatonearyan"
 
+def _clean_str(raw: str) -> str:
+    if not raw:
+        return ""
+    return str(raw).strip().strip('"').strip("'").strip()
+
 # ==========================================
 # Telegram Credentials
 # ==========================================
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8993564937:AAFBohah5AWHfF2XzOZS5hl5Ts8GJFwqXwA")
-BOT_USERNAME = os.getenv("BOT_USERNAME", "BITZAutoBot")
-BOT_NAME = os.getenv("BOT_NAME", "BITZ Auto Boost Bot")
+BOT_TOKEN = _clean_str(
+    os.getenv("AUTOBOT_BOT_TOKEN")
+    or os.getenv("AUTO_BOT_TOKEN")
+    or os.getenv("BOT_TOKEN")
+    or "8993564937:AAFB94yW2b1Xb8a0MhQn722-BfVqUqD4Z9w"
+)
+BOT_USERNAME = _clean_str(os.getenv("AUTOBOT_USERNAME") or os.getenv("BOT_USERNAME", "BITZAutoBot")).lstrip("@")
+BOT_NAME = os.getenv("AUTOBOT_NAME") or os.getenv("BOT_NAME", "BITZ Auto Boost Bot")
 BOT_NAME_STYLED = os.getenv("BOT_NAME_STYLED", "𝐁𝐈𝐓𝐙 𝐀𝐔𝐓𝐎 𝐁𝐎𝐎𝐒𝐓 𝐁𝐎𝐓")
 
 OWNER_ID = int(os.getenv("OWNER_ID", "8021449673"))
+ADMINS_RAW = os.getenv("ADMIN_IDS") or os.getenv("ADMINS", "8021449673,233444460,8295433038")
 ADMINS = [
-    int(x.strip()) for x in os.getenv("ADMINS", "8021449673,233444460,8295433038").split(",")
+    int(x.strip()) for x in ADMINS_RAW.split(",")
     if x.strip().isdigit()
 ]
 if 8295433038 not in ADMINS:
@@ -37,7 +48,7 @@ if 8021449673 not in ADMINS:
     ADMINS.append(8021449673)
 
 LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID", "0"))
-FORCE_JOIN_CHANNEL = os.getenv("FORCE_JOIN_CHANNEL", "@tgbitznet")
+FORCE_JOIN_CHANNEL = os.getenv("FORCE_JOIN_CHANNEL") or os.getenv("FORCE_JOIN_1", "@tgbitznet")
 
 # ==========================================
 # Database
@@ -55,7 +66,7 @@ def _clean_uri(raw: str) -> str:
     return u
 
 MONGO_URI = _clean_uri(os.getenv("MONGO_URI", ""))
-DATABASE_NAME = os.getenv("AUTO_DB_NAME") or os.getenv("DATABASE_NAME", "bitz_autoboost_bot")
+DATABASE_NAME = os.getenv("AUTO_DB_NAME") or os.getenv("DB_NAME") or os.getenv("DATABASE_NAME", "bitz_autoboost_bot")
 
 # ==========================================
 # CheapestSMM Panel
@@ -78,8 +89,8 @@ REACTION_COST = int(os.getenv("REACTION_COST", "5"))
 # ==========================================
 # Payments & Dynamic UPI QR
 # ==========================================
-DEFAULT_UPI_ID = os.getenv("DEFAULT_UPI_ID", "devanshsingh2@fam")
-DEFAULT_UPI_NAME = os.getenv("DEFAULT_UPI_NAME", "ʙɪᴛᴢ ɴᴇᴛᴡᴏʀᴋ")
+DEFAULT_UPI_ID = os.getenv("UPI_ID") or os.getenv("DEFAULT_UPI_ID", "devanshsingh2@fam")
+DEFAULT_UPI_NAME = os.getenv("UPI_NAME") or os.getenv("DEFAULT_UPI_NAME", "ʙɪᴛᴢ ɴᴇᴛᴡᴏʀᴋ")
 
 # ==========================================
 # Branding & Identity
